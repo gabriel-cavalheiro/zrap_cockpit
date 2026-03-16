@@ -1,0 +1,35 @@
+@AbapCatalog.viewEnhancementCategory: [#NONE]
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+@EndUserText.label: 'Basic - Títulos Vencidos Cliente'
+@Metadata.ignorePropagatedAnnotations: true
+define view entity ZI_IS_TITULOS_VENCIDOS
+  as select from I_OperationalAcctgDocItem
+{
+  key Customer                    as Customer,
+  key CompanyCode                 as CompanyCode,
+  key AccountingDocument          as AccountingDocument,
+  key AccountingDocumentItem      as AccountingDocumentItem,
+  key FiscalYear                  as FiscalYear,
+
+      NetDueDate                  as PrazoPagamento,
+
+      @Semantics.amount.currencyCode: 'Moeda'
+      AmountInCompanyCodeCurrency as Montante,
+
+      CompanyCodeCurrency         as Moeda,
+
+      // Criticidade: vencido = vermelho (1), em dia = verde (3)
+      case when NetDueDate < $session.system_date
+        then 1
+        else 3
+      end                         as StatusCriticality,
+
+      case when NetDueDate < $session.system_date
+        then 'Vencido'
+        else 'Em dia'
+      end                         as StatusDescricao
+
+}
+where
+      FinancialAccountType       = 'D'
+  and ClearingAccountingDocument = ''
