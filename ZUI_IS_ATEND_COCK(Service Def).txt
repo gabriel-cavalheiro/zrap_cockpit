@@ -1,0 +1,11 @@
+@EndUserText: { label: 'Service Binding para Cockpit do Assistente' }
+@ObjectModel: { leadingEntity: { name: 'ZC_IS_ATEND_COCK' } }
+define service ZUI_IS_ATEND_COCK
+  provider contracts odata_v4_ui {
+  expose ZC_IS_ATEND_COCK        as Cockpit;
+  expose ZI_IS_ITEMS_PO          as ItemsPO;
+  expose ZI_IS_ESTOQUE_MATERIAIS as EstoqueMaterial;
+  expose ZI_IS_TITULOS_VENCIDOS  as TitulosVencidos;
+  expose ZI_IS_VENDAS_ULT_MESES  as VendasUltimosMeses;
+  expose I_ProductDescription_2  as Produtos;
+}
