@@ -1,0 +1,81 @@
+managed implementation in class ZBP_R_IS_ATEND_COCK unique;
+strict ( 2 );
+with draft;
+extensible;
+define behavior for ZR_IS_ATEND_COCK alias Atendimento
+persistent table ztbis_atend_cock
+extensible
+draft table ztbis_atnd_cck_d
+etag master LocalLastChangedAt
+lock master total etag LastChangedAt
+early numbering
+authorization master ( global )
+{
+  field ( readonly )
+  AtendimentoID,
+  LocalCreatedBy,
+  LocalCreatedAt,
+  LocalLastChangedBy,
+  LocalLastChangedAt,
+  LastChangedAt;
+
+  create;
+  update;
+  delete;
+
+  draft action Activate optimized;
+  draft action Discard;
+  draft action Edit;
+  draft action Resume;
+  draft determine action Prepare
+  {
+    validation validateCustomer;
+    validation validateCompanyCode;
+    validation checkTitulosVencidos;
+  }
+
+  determination setStatusAberto on modify { create; }
+  determination setDataAtendimento on modify { create; }
+  determination setOperador on modify { create; }
+
+  validation validateCustomer     on save { create; update; field Customer; }
+  validation validateCompanyCode  on save { create; update; field Companycode; }
+  validation checkTitulosVencidos on save { create; update; field Customer; }
+
+  action ( features : instance ) finalizar result [1] $self;
+  action ( features : instance ) cancelar  result [1] $self;
+  action ( features : instance ) reabrir   result [1] $self;
+
+  side effects
+  {
+    determine action Prepare executed on field Customer affects messages;
+    action finalizar affects field Situacao;
+    action cancelar  affects field Situacao;
+    action reabrir   affects field Situacao;
+  }
+
+
+  mapping for ztbis_atend_cock corresponding extensible
+    {
+      AtendimentoID      = ATENDIMENTO_ID;
+      Companycode        = COMPANYCODE;
+      Customer           = CUSTOMER;
+      Situacao           = SITUACAO;
+      DataAtendimento    = DATA_ATENDIMENTO;
+      Operador           = OPERADOR;
+      NomeOperador       = NOME_OPERADOR;
+      Operacao           = OPERACAO;
+      DescrOperacao      = DESCR_OPERACAO;
+      TipoOcorrencia     = TIPO_OCORRENCIA;
+      DescrOcorrencia    = DESCR_OCORRENCIA;
+      Pedido             = PEDIDO;
+      Nfe                = NFE;
+      Observacao         = OBSERVACAO;
+      LocalCreatedBy     = LOCAL_CREATED_BY;
+      LocalCreatedAt     = LOCAL_CREATED_AT;
+      LocalLastChangedBy = LOCAL_LAST_CHANGED_BY;
+      LocalLastChangedAt = LOCAL_LAST_CHANGED_AT;
+      LastChangedAt      = LAST_CHANGED_AT;
+    }
+
+}
