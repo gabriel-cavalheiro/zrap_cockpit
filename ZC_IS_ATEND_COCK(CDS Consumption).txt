@@ -1,0 +1,99 @@
+@AccessControl.authorizationCheck: #MANDATORY
+@EndUserText.label: 'Consumption - Atendimento Cockpit'
+@Metadata.allowExtensions: true
+@ObjectModel.semanticKey: ['AtendimentoId']
+@ObjectModel.sapObjectNodeType.name: 'ZTBIS_ATEND_COCK'
+@VDM.viewType: #CONSUMPTION
+@Search.searchable: true
+
+define root view entity ZC_IS_ATEND_COCK
+  provider contract transactional_query
+  as projection on ZR_IS_ATEND_COCK
+
+{
+  key AtendimentoID,
+
+      @Consumption.valueHelpDefinition: [ { entity: { name: 'I_CompanyCodeStdVH', element: 'CompanyCode' },
+                                            qualifier: 'VHCompanyCode' } ]
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      Companycode,
+
+      @Consumption.valueHelpDefinition: [ { entity: { name: 'I_Customer', element: 'Customer' },
+                                            qualifier: 'VHCustomer',
+                                            additionalBinding: [ { element: 'CustomerName',
+                                                                   localElement: 'CustomerName',
+                                                                   usage: #RESULT } ] } ]
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      @Consumption.filter.selectionType: #INTERVAL
+      Customer,
+
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      CustomerName,
+
+      @ObjectModel.text.element: [ 'LabelTitle' ]
+      LabelTitle,
+      LabelSituacao,
+
+      @ObjectModel.text.element: [ 'LabelSituacao' ]
+      @UI.textArrangement: #TEXT_ONLY
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      Situacao,
+      SituacaoCriticality,
+
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      @Consumption.filter.selectionType: #INTERVAL
+      DataAtendimento,
+
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      Operador,
+
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      NomeOperador,
+
+      @Consumption.valueHelpDefinition: [{
+        entity: { name: 'ZIS_I_CFG_OPER_VH', element: 'Chave' },
+        additionalBinding: [
+            { element: 'Descricao', localElement: 'DescrOperacao', usage: #RESULT }
+        ]
+      }]
+      Operacao,
+      DescrOperacao,
+
+      @Consumption.valueHelpDefinition: [{
+        entity: { name: 'ZIS_I_CFG_TPOCOR_VH', element: 'Chave' },
+        additionalBinding: [
+            { element: 'Descricao', localElement: 'DescrOcorrencia', usage: #RESULT }
+        ]
+      }]
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      TipoOcorrencia,
+      DescrOcorrencia,
+
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      @Consumption.filter.selectionType: #INTERVAL
+      Pedido,
+
+      @Search.defaultSearchElement: true
+      @Search.fuzzinessThreshold: 0.8
+      @Consumption.filter.selectionType: #INTERVAL
+      Nfe,
+      Observacao,
+      LocalCreatedBy,
+      LocalCreatedAt,
+      LocalLastChangedBy,
+      LocalLastChangedAt,
+      LastChangedAt,
+
+      _Customer,
+      _CompanyCode,
+      _ItemsPO
+}
