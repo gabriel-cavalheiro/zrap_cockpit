@@ -1,0 +1,17 @@
+@EndUserText.label: 'Basic Custom - Vendas nos Últimos Meses'
+@ObjectModel.query.implementedBy: 'ABAP:ZCL_IS_VENDA_MESES_QUERY'
+define custom entity ZI_IS_VENDAS_ULT_MESES
+{
+  key SoldToParty          : kunnr;
+  key Material             : matnr;
+  key AnoMes               : abap.numc(6);
+      MaterialDescription  : abap.char(40);
+      @Semantics.quantity.unitOfMeasure: 'BillingQuantityUnit'
+      QtdFaturada           : abap.quan(13,3);
+      BillingQuantityUnit   : vrkme;
+      @Semantics.amount.currencyCode: 'TransactionCurrency'
+      ValorLiquido          : abap.curr(15,2);
+      TransactionCurrency   : waers;
+      QtdDocumentos         : abap.int4;
+ 
+}
