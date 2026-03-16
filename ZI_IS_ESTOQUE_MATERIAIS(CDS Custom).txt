@@ -1,0 +1,45 @@
+@EndUserText.label: 'Basic Custom - Estoque de Materiais por Preço'
+@ObjectModel.query.implementedBy: 'ABAP:ZCL_IS_ESTOQUE_MAT_QUERY'
+
+define custom entity ZI_IS_ESTOQUE_MATERIAIS
+{
+      @Consumption.valueHelpDefinition: [ { entity: { name: 'I_Product', element: 'Product' } } ]
+      @UI.selectionField  : [ { position: 10 } ]
+      @Consumption.filter.mandatory: true
+  key Material            : matnr;
+
+      @UI.selectionField  : [ { position: 30 } ]
+  key Plant               : werks_d;
+
+      @Consumption.valueHelpDefinition: [ { entity: { name: 'I_CompanyCode', element: 'CompanyCode' } } ]
+      @UI.selectionField  : [ { position: 30 } ]
+      CompanyCode         : bukrs;
+
+      @Consumption.valueHelpDefinition: [ { entity: { name: 'I_Customer', element: 'Customer' } } ]
+      @UI.selectionField  : [ { position: 40 } ]
+      Customer            : kunnr;
+
+      @UI.selectionField  : [ { position: 40 } ]
+      PlantName           : abap.char(30);
+
+      @UI.selectionField  : [ { position: 50 } ]
+      MaterialDescription : abap.char(40);
+
+      @Semantics.quantity.unitOfMeasure: 'BaseUnit'
+      @UI.selectionField  : [ { position: 60 } ]
+      EstoqueDisponivel   : abap.quan(13,3);
+
+      @UI.selectionField  : [ { position: 70 } ]
+      BaseUnit            : meins;
+
+      @Semantics.amount.currencyCode: 'ConditionCurrency'
+      @UI.selectionField  : [ { position: 80 } ]
+      PrecoCondicao       : abap.curr(11,2);
+
+      @UI.selectionField  : [ { position: 90 } ]
+      ConditionCurrency   : waers;
+
+      @UI.selectionField  : [ { position: 100 } ]
+      TipoMaterial        : abap.char(20); // 'Consultado' ou 'Relacionado'
+
+}
