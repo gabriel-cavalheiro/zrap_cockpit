@@ -1,0 +1,435 @@
+CLASS zcl_is_estoque_mat_query DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES if_rap_query_provider.
+
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_pricing_result,
+             condition_record          TYPE c LENGTH 10,
+             condition_rate_value      TYPE p LENGTH 6 DECIMALS 2,
+             condition_rate_value_unit TYPE c LENGTH 5,
+           END OF ty_pricing_result.
+
+    TYPES: BEGIN OF ty_estoque_line,
+             material             TYPE matnr,
+             plant                TYPE werks_d,
+             plant_name           TYPE c LENGTH 30,
+             material_description TYPE c LENGTH 40,
+             estoque_disponivel   TYPE p LENGTH 7  DECIMALS 3,
+             base_unit            TYPE meins,
+             preco_condicao       TYPE p LENGTH 6  DECIMALS 2,
+             condition_currency   TYPE waers,
+             tipo_material        TYPE c LENGTH 20,
+           END OF ty_estoque_line.
+
+    METHODS get_pricing_via_remote_api
+      IMPORTING iv_material       TYPE matnr
+                iv_plant          TYPE werks_d
+                iv_customer       TYPE kunnr
+      RETURNING VALUE(rs_pricing) TYPE ty_pricing_result.
+
+    METHODS try_validity_filter
+      IMPORTING io_proxy                   TYPE REF TO /iwbep/if_cp_client_proxy
+                iv_material                TYPE matnr
+                iv_plant                   TYPE werks_d OPTIONAL
+                iv_customer                TYPE kunnr   OPTIONAL
+      RETURNING VALUE(rv_condition_record) TYPE char10.
+
+    METHODS get_condition_price
+      IMPORTING io_proxy            TYPE REF TO /iwbep/if_cp_client_proxy
+                iv_condition_record TYPE char10
+      RETURNING VALUE(rs_pricing)   TYPE ty_pricing_result.
+
+ENDCLASS.
+
+
+
+CLASS ZCL_IS_ESTOQUE_MAT_QUERY IMPLEMENTATION.
+
+
+  METHOD if_rap_query_provider~select.
+    DATA lt_result TYPE STANDARD TABLE OF ty_estoque_line.
+
+    DATA(lo_filter) = io_request->get_filter( ).
+    DATA(lt_ranges) = lo_filter->get_as_ranges( ).
+
+    DATA lv_material     TYPE matnr.
+    DATA lv_company_code TYPE bukrs.
+    DATA lv_customer     TYPE kunnr.
+
+    TYPES: BEGIN OF ty_sum,
+             material TYPE I_MaterialStock_2-Material,
+             plant    TYPE I_MaterialStock_2-Plant,
+             estoque  TYPE I_MaterialStock_2-MatlWrhsStkQtyInMatlBaseUnit,
+           END OF ty_sum.
+
+    LOOP AT lt_ranges INTO DATA(ls_range).
+
+      CASE ls_range-name.
+        WHEN 'MATERIAL'.
+          IF ls_range-range IS NOT INITIAL.
+            lv_material = ls_range-range[ 1 ]-low.
+          ENDIF.
+        WHEN 'COMPANYCODE'.
+          IF ls_range-range IS NOT INITIAL.
+            lv_company_code = ls_range-range[ 1 ]-low.
+          ENDIF.
+        WHEN 'CUSTOMER'.
+          IF ls_range-range IS NOT INITIAL.
+            lv_customer = ls_range-range[ 1 ]-low.
+          ENDIF.
+      ENDCASE.
+
+    ENDLOOP.
+
+    IF lv_material IS NOT INITIAL.
+
+      DATA lt_all_mat TYPE STANDARD TABLE OF matnr.
+
+      SELECT material_relac FROM ztbis_prod_rel
+        WHERE material_origem = @lv_material
+        INTO TABLE @DATA(lt_mat_rel).
+
+      APPEND lv_material TO lt_all_mat.
+
+      LOOP AT lt_mat_rel INTO DATA(ls_rel).
+        APPEND ls_rel-material_relac TO lt_all_mat.
+      ENDLOOP.
+
+      SORT lt_all_mat.
+      DELETE ADJACENT DUPLICATES FROM lt_all_mat.
+
+      " Estoque Livre
+      IF lt_all_mat IS NOT INITIAL.
+
+        SELECT Material                     AS material,
+               Plant                        AS plant,
+               MatlWrhsStkQtyInMatlBaseUnit AS estoque
+          FROM I_MaterialStock_2
+          FOR ALL ENTRIES IN @lt_all_mat
+          WHERE Material    = @lt_all_mat-table_line
+            AND CompanyCode = @lv_company_code
+          INTO TABLE @DATA(lt_stock).
+
+      ENDIF.
+
+      " Preço via API
+      IF lt_stock IS NOT INITIAL.
+        DATA lt_sum_stock TYPE TABLE OF ty_sum.
+        DATA ls_sum_stock LIKE LINE OF lt_sum_stock.
+
+        LOOP AT lt_stock INTO DATA(ls_stock).
+          CLEAR ls_sum_stock.
+          ls_sum_stock-material = ls_stock-material.
+          ls_sum_stock-plant = ls_stock-plant.
+          ls_sum_stock-estoque = ls_stock-estoque.
+          COLLECT ls_sum_stock INTO lt_sum_stock.
+        ENDLOOP.
+
+        LOOP AT lt_sum_stock INTO ls_sum_stock.
+
+          DATA(ls_line) = VALUE ty_estoque_line( material           = ls_sum_stock-material
+                                                 plant              = ls_sum_stock-plant
+                                                 estoque_disponivel = ls_sum_stock-estoque
+                                                 tipo_material      = COND #( WHEN ls_sum_stock-material = lv_material
+                                                                              THEN 'Consultado'
+                                                                              ELSE 'Relacionado' ) ).
+
+          DATA(ls_pricing) = get_pricing_via_remote_api( iv_material = ls_sum_stock-material
+                                                         iv_plant    = ls_sum_stock-plant
+                                                         iv_customer = lv_customer ).
+
+          IF ls_pricing-condition_record IS NOT INITIAL.
+
+            ls_line-preco_condicao     = ls_pricing-condition_rate_value.
+            ls_line-condition_currency = ls_pricing-condition_rate_value_unit.
+          ENDIF.
+
+          APPEND ls_line TO lt_result.
+        ENDLOOP.
+
+        SORT lt_result BY tipo_material
+                          material
+                          plant.
+      ENDIF.
+
+    ENDIF.
+
+    IF io_request->is_total_numb_of_rec_requested( ).
+
+      io_response->set_total_number_of_records( lines( lt_result ) ).
+
+    ENDIF.
+
+    IF io_request->is_data_requested( ).
+
+      DATA(lo_paging)    = io_request->get_paging( ).
+      DATA(lv_offset)    = lo_paging->get_offset( ).
+      DATA(lv_page_size) = lo_paging->get_page_size( ).
+
+      IF lv_page_size > 0 AND lt_result IS NOT INITIAL.
+
+        DATA(lv_max) = lv_offset + lv_page_size.
+
+        IF lv_max > lines( lt_result ).
+          lv_max = lines( lt_result ).
+        ENDIF.
+
+        DATA lt_page TYPE STANDARD TABLE OF ty_estoque_line.
+
+        IF lv_offset < lines( lt_result ).
+
+          DATA(lv_idx) = lv_offset + 1.
+
+          WHILE lv_idx <= lv_max.
+            APPEND lt_result[ lv_idx ] TO lt_page.
+            lv_idx += 1.
+          ENDWHILE.
+
+        ENDIF.
+
+        io_response->set_data( lt_page ).
+      ELSE.
+        io_response->set_data( lt_result ).
+      ENDIF.
+    ELSE.
+      io_response->set_data( lt_result ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD get_pricing_via_remote_api.
+    DATA lo_http_client  TYPE REF TO if_web_http_client.
+    DATA lo_client_proxy TYPE REF TO /iwbep/if_cp_client_proxy.
+
+    TRY.
+        DATA(lo_destination) = cl_http_destination_provider=>create_by_comm_arrangement(
+                                   comm_scenario = 'Z_OUT_S4_COND_API' ).
+        lo_http_client = cl_web_http_client_manager=>create_by_http_destination( lo_destination ).
+
+        lo_client_proxy = /iwbep/cl_cp_factory_remote=>create_v2_remote_proxy(
+                              is_proxy_model_key       = VALUE #( repository_id       = 'DEFAULT'
+                                                                  proxy_model_id      = 'ZSC_API_SLSPRICINGCONDITION'
+                                                                  proxy_model_version = '0001' )
+                              io_http_client           = lo_http_client
+                              iv_relative_service_root = '' ).
+
+        ASSERT lo_http_client IS BOUND.
+
+        DATA lv_condition_record TYPE char10.
+
+        " Centro + Cliente + Material
+        IF iv_plant IS NOT INITIAL AND iv_customer IS NOT INITIAL.
+
+          lv_condition_record = try_validity_filter( io_proxy    = lo_client_proxy
+                                                     iv_material = iv_material
+                                                     iv_plant    = iv_plant
+                                                     iv_customer = iv_customer ).
+
+          IF lv_condition_record IS NOT INITIAL.
+
+            rs_pricing = get_condition_price( io_proxy            = lo_client_proxy
+                                              iv_condition_record = lv_condition_record ).
+
+            IF rs_pricing-condition_record IS NOT INITIAL.
+              RETURN.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+        "  Cliente + Material (sem Centro)
+        IF iv_customer IS NOT INITIAL.
+          CLEAR lv_condition_record.
+          lv_condition_record = try_validity_filter( io_proxy    = lo_client_proxy
+                                                     iv_material = iv_material
+                                                     iv_customer = iv_customer ).
+          IF lv_condition_record IS NOT INITIAL.
+            rs_pricing = get_condition_price( io_proxy            = lo_client_proxy
+                                              iv_condition_record = lv_condition_record ).
+            IF rs_pricing-condition_record IS NOT INITIAL.
+              RETURN.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+        " Centro + Material (sem Cliente)
+        IF iv_plant IS NOT INITIAL.
+          CLEAR lv_condition_record.
+          lv_condition_record = try_validity_filter( io_proxy    = lo_client_proxy
+                                                     iv_material = iv_material
+                                                     iv_plant    = iv_plant ).
+          IF lv_condition_record IS NOT INITIAL.
+            rs_pricing = get_condition_price( io_proxy            = lo_client_proxy
+                                              iv_condition_record = lv_condition_record ).
+            IF rs_pricing-condition_record IS NOT INITIAL.
+              RETURN.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+        "  Apenas Material
+        CLEAR lv_condition_record.
+        lv_condition_record = try_validity_filter( io_proxy    = lo_client_proxy
+                                                   iv_material = iv_material ).
+        IF lv_condition_record IS NOT INITIAL.
+          rs_pricing = get_condition_price( io_proxy            = lo_client_proxy
+                                            iv_condition_record = lv_condition_record ).
+        ENDIF.
+
+      CATCH cx_http_dest_provider_error
+            cx_web_http_client_error INTO DATA(lx_http).
+        CLEAR rs_pricing.
+      CATCH /iwbep/cx_cp_remote
+            /iwbep/cx_gateway INTO DATA(lx_proxy).
+        CLEAR rs_pricing.
+    ENDTRY.
+  ENDMETHOD.
+
+
+  METHOD try_validity_filter.
+
+    DATA: lt_business_data TYPE TABLE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_cndn_recd_val_2.
+
+    DATA: lt_r_app   TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_cndn_recd_val_2-condition_application,
+          lt_r_type  TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_cndn_recd_val_2-condition_type,
+          lt_r_mat   TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_cndn_recd_val_2-material,
+          lt_r_plant TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_cndn_recd_val_2-plant,
+          lt_r_cust  TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_cndn_recd_val_2-customer,
+          lt_r_start TYPE RANGE OF datn,
+          lt_r_end   TYPE RANGE OF datn.
+
+    TRY.
+        DATA(lv_today) = cl_abap_context_info=>get_system_date( ).
+
+        " Monta ranges
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = 'V' )         TO lt_r_app.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = 'PPR0' )      TO lt_r_type.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_material ) TO lt_r_mat.
+        APPEND VALUE #( sign = 'I' option = 'LE' low = lv_today )    TO lt_r_start.
+        APPEND VALUE #( sign = 'I' option = 'GE' low = lv_today )    TO lt_r_end.
+
+        IF iv_plant IS NOT INITIAL.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_plant ) TO lt_r_plant.
+        ENDIF.
+        IF iv_customer IS NOT INITIAL.
+          APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_customer ) TO lt_r_cust.
+        ENDIF.
+
+        " Cria request
+        DATA(lo_request) = io_proxy->create_resource_for_entity_set(
+          'A_SLS_PRCG_CNDN_RECD_VALID'
+        )->create_request_for_read( ).
+
+        " Cria filtros
+        DATA(lo_ff) = lo_request->create_filter_factory( ).
+
+        DATA(lo_f1) = lo_ff->create_by_range( iv_property_path = 'CONDITION_APPLICATION'
+                                               it_range         = lt_r_app ).
+        DATA(lo_f2) = lo_ff->create_by_range( iv_property_path = 'CONDITION_TYPE'
+                                               it_range         = lt_r_type ).
+        DATA(lo_f3) = lo_ff->create_by_range( iv_property_path = 'MATERIAL'
+                                               it_range         = lt_r_mat ).
+        DATA(lo_f4) = lo_ff->create_by_range( iv_property_path = 'CONDITION_VALIDITY_START_DAT'
+                                               it_range         = lt_r_start ).
+        DATA(lo_f5) = lo_ff->create_by_range( iv_property_path = 'CONDITION_VALIDITY_END_DAT'
+                                               it_range         = lt_r_end ).
+
+        DATA(lo_filter_root) = lo_f1->and( lo_f2 )->and( lo_f3 )->and( lo_f4 )->and( lo_f5 ).
+
+        IF iv_plant IS NOT INITIAL.
+          DATA(lo_fp) = lo_ff->create_by_range( iv_property_path = 'PLANT'
+                                                 it_range         = lt_r_plant ).
+          lo_filter_root = lo_filter_root->and( lo_fp ).
+        ENDIF.
+
+        IF iv_customer IS NOT INITIAL.
+          DATA(lo_fc) = lo_ff->create_by_range( iv_property_path = 'CUSTOMER'
+                                                 it_range         = lt_r_cust ).
+          lo_filter_root = lo_filter_root->and( lo_fc ).
+        ENDIF.
+
+        lo_request->set_filter( lo_filter_root ).
+        lo_request->set_top( 1 ).
+
+        " Executa
+        DATA(lo_response) = lo_request->execute( ).
+        lo_response->get_business_data( IMPORTING et_business_data = lt_business_data ).
+
+        IF lt_business_data IS NOT INITIAL.
+          rv_condition_record = lt_business_data[ 1 ]-condition_record.
+        ENDIF.
+
+      CATCH /iwbep/cx_cp_remote
+            /iwbep/cx_gateway
+            cx_root.
+        CLEAR rv_condition_record.
+    ENDTRY.
+
+  ENDMETHOD.
+
+
+  METHOD get_condition_price.
+
+    DATA: lt_business_data TYPE TABLE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_condition_rec_3.
+
+    DATA: lt_r_record  TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_condition_rec_3-condition_record,
+          lt_r_app     TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_condition_rec_3-condition_application,
+          lt_r_type    TYPE RANGE OF zsc_api_slspricingcondition=>tys_a_sls_prcg_condition_rec_3-condition_type,
+          lt_r_deleted TYPE RANGE OF abap_bool.
+
+    TRY.
+        " Monta ranges
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = iv_condition_record ) TO lt_r_record.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = 'V' )                TO lt_r_app.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = 'PPR0' )             TO lt_r_type.
+        APPEND VALUE #( sign = 'I' option = 'EQ' low = abap_false )         TO lt_r_deleted.
+
+        " Cria request
+        DATA(lo_request) = io_proxy->create_resource_for_entity_set(
+          'A_SLS_PRCG_CONDITION_RECOR' )->create_request_for_read( ).
+
+        " Cria filtros
+        DATA(lo_ff) = lo_request->create_filter_factory( ).
+
+        DATA(lo_f1) = lo_ff->create_by_range( iv_property_path = 'CONDITION_RECORD'
+                                               it_range         = lt_r_record ).
+        DATA(lo_f2) = lo_ff->create_by_range( iv_property_path = 'CONDITION_APPLICATION'
+                                               it_range         = lt_r_app ).
+        DATA(lo_f3) = lo_ff->create_by_range( iv_property_path = 'CONDITION_TYPE'
+                                               it_range         = lt_r_type ).
+        DATA(lo_f4) = lo_ff->create_by_range( iv_property_path = 'CONDITION_IS_DELETED'
+                                               it_range         = lt_r_deleted ).
+
+        DATA(lo_filter_root) = lo_f1->and( lo_f2 )->and( lo_f3 )->and( lo_f4 ).
+
+        lo_request->set_filter( lo_filter_root ).
+        lo_request->set_top( 10 ).
+
+        "Executa
+        DATA(lo_response) = lo_request->execute( ).
+        lo_response->get_business_data( IMPORTING et_business_data = lt_business_data ).
+
+        IF lines( lt_business_data ) > 1.
+          SORT lt_business_data BY condition_validity_start_d DESCENDING
+                                   condition_validity_end_dat  DESCENDING.
+        ENDIF.
+
+        "Retorna preço
+        IF lt_business_data IS NOT INITIAL.
+          DATA(ls_record) = lt_business_data[ 1 ].
+          rs_pricing-condition_record          = ls_record-condition_record.
+          rs_pricing-condition_rate_value      = ls_record-condition_rate_value.
+          rs_pricing-condition_rate_value_unit = ls_record-condition_rate_value_unit.
+        ENDIF.
+
+      CATCH /iwbep/cx_cp_remote
+            /iwbep/cx_gateway
+            cx_root.
+        CLEAR rs_pricing.
+    ENDTRY.
+
+  ENDMETHOD.
+ENDCLASS.
