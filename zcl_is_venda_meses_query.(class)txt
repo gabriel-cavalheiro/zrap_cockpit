@@ -1,0 +1,154 @@
+CLASS zcl_is_venda_meses_query DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES if_rap_query_provider.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.
+
+
+
+CLASS ZCL_IS_VENDA_MESES_QUERY IMPLEMENTATION.
+
+
+  METHOD if_rap_query_provider~select.
+
+    DATA lt_result TYPE STANDARD TABLE OF zi_is_vendas_ult_meses.
+
+    DATA(lo_filter) = io_request->get_filter( ).
+    DATA(lt_ranges) = lo_filter->get_as_ranges( ).
+
+    DATA lv_customer TYPE kunnr.
+
+    LOOP AT lt_ranges INTO DATA(ls_range).
+      CASE ls_range-name.
+        WHEN 'SOLDTOPARTY'.
+          IF ls_range-range IS NOT INITIAL.
+            lv_customer = ls_range-range[ 1 ]-low.
+          ENDIF.
+      ENDCASE.
+    ENDLOOP.
+
+    IF lv_customer IS NOT INITIAL.
+
+      " Calcular intervalo: primeiro dia de 12 meses atrás até hoje
+      DATA lv_today TYPE dats.
+      lv_today = cl_abap_context_info=>get_system_date( ).
+
+      DATA(lv_ano) = CONV i( lv_today+0(4) ).
+      DATA(lv_mes) = CONV i( lv_today+4(2) ).
+      lv_mes -= 12.
+      IF lv_mes <= 0.
+        lv_ano -= 1.
+        lv_mes += 12.
+      ENDIF.
+
+      DATA(lv_data_inicio) = CONV dats(
+        |{ lv_ano }{ CONV string( lv_mes ) WIDTH = 2 ALIGN = RIGHT PAD = '0' }01| ).
+
+      "Itens faturados
+      SELECT soldtoparty,
+             billingdocument,
+             billingdocumentitem,
+             creationdate,
+             material,
+             billingquantity,
+             billingquantityunit,
+             netamount,
+             transactioncurrency
+        FROM i_billingdocumentitem
+        WHERE soldtoparty              = @lv_customer
+          AND storagelocation         <> ''
+          AND cancelledbillingdocument = ''
+          AND creationdate            >= @lv_data_inicio
+          AND creationdate            <= @lv_today
+        INTO TABLE @DATA(lt_billing).
+
+      IF lt_billing IS NOT INITIAL.
+
+        DATA lt_materials TYPE SORTED TABLE OF matnr WITH UNIQUE KEY table_line.
+        LOOP AT lt_billing INTO DATA(ls_bill_mat).
+          INSERT ls_bill_mat-material INTO TABLE lt_materials.
+        ENDLOOP.
+
+        IF lt_materials IS NOT INITIAL.
+          SELECT product            AS material,
+                 productdescription AS descricao
+            FROM i_productdescription_2
+            FOR ALL ENTRIES IN @lt_materials
+            WHERE product  = @lt_materials-table_line
+              AND language = 'P'
+            INTO TABLE @DATA(lt_desc).
+        ENDIF.
+
+        LOOP AT lt_billing INTO DATA(ls_bill).
+          DATA(lv_ano_mes) = CONV char6( ls_bill-creationdate+0(6) ).
+
+          READ TABLE lt_result ASSIGNING FIELD-SYMBOL(<fs_res>)
+            WITH KEY soldtoparty = ls_bill-soldtoparty
+                     material    = ls_bill-material
+                     anomes      = lv_ano_mes.
+
+          IF sy-subrc = 0.
+            <fs_res>-qtdfaturada   += ls_bill-billingquantity.
+            <fs_res>-valorliquido  += ls_bill-netamount.
+            <fs_res>-qtddocumentos += 1.
+          ELSE.
+            APPEND VALUE #(
+              SoldToParty         = ls_bill-soldtoparty
+              Material            = ls_bill-material
+              AnoMes              = lv_ano_mes
+              MaterialDescription = VALUE #( lt_desc[ material = ls_bill-material ]-descricao OPTIONAL )
+              QtdFaturada         = ls_bill-billingquantity
+              BillingQuantityUnit = ls_bill-billingquantityunit
+              ValorLiquido        = ls_bill-netamount
+              TransactionCurrency = ls_bill-transactioncurrency
+              QtdDocumentos       = 1
+            ) TO lt_result.
+          ENDIF.
+        ENDLOOP.
+
+        SORT lt_result BY Material AnoMes.
+
+      ENDIF.
+
+    ENDIF.
+
+    IF io_request->is_total_numb_of_rec_requested( ).
+      io_response->set_total_number_of_records( lines( lt_result ) ).
+    ENDIF.
+
+    IF io_request->is_data_requested( ).
+      DATA(lo_paging)    = io_request->get_paging( ).
+      DATA(lv_offset)    = lo_paging->get_offset( ).
+      DATA(lv_page_size) = lo_paging->get_page_size( ).
+
+      IF lv_page_size > 0 AND lt_result IS NOT INITIAL.
+        DATA(lv_max) = lv_offset + lv_page_size.
+        IF lv_max > lines( lt_result ).
+          lv_max = lines( lt_result ).
+        ENDIF.
+
+        DATA lt_page TYPE STANDARD TABLE OF zi_is_vendas_ult_meses.
+        IF lv_offset < lines( lt_result ).
+          DATA(lv_idx) = lv_offset + 1.
+          WHILE lv_idx <= lv_max.
+            APPEND lt_result[ lv_idx ] TO lt_page.
+            lv_idx += 1.
+          ENDWHILE.
+        ENDIF.
+
+        io_response->set_data( lt_page ).
+      ELSE.
+        io_response->set_data( lt_result ).
+      ENDIF.
+    ELSE.
+      io_response->set_data( lt_result ).
+    ENDIF.
+
+  ENDMETHOD.
+ENDCLASS.
