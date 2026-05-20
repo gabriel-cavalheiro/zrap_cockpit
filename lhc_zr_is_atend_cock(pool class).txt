@@ -1,0 +1,566 @@
+CLASS lhc_zr_is_atend_cock DEFINITION INHERITING FROM cl_abap_behavior_handler.
+  PRIVATE SECTION.
+
+    " Constantes de Status
+    CONSTANTS: gc_status_aberto     TYPE c LENGTH 2 VALUE 'AB',
+               gc_status_finalizado TYPE c LENGTH 2 VALUE 'FI',
+               gc_status_cancelado  TYPE c LENGTH 2 VALUE 'CA'.
+
+
+    METHODS:
+      get_global_authorizations FOR GLOBAL AUTHORIZATION
+        IMPORTING
+        REQUEST requested_authorizations FOR Atendimento
+        RESULT result,
+      get_instance_features FOR INSTANCE FEATURES
+        IMPORTING keys REQUEST requested_features FOR Atendimento RESULT result.
+
+    METHODS cancelar FOR MODIFY
+      IMPORTING keys FOR ACTION Atendimento~cancelar RESULT result.
+
+    METHODS finalizar FOR MODIFY
+      IMPORTING keys FOR ACTION Atendimento~finalizar RESULT result.
+
+    METHODS reabrir FOR MODIFY
+      IMPORTING keys FOR ACTION Atendimento~reabrir RESULT result.
+
+    METHODS setDataAtendimento FOR DETERMINE ON MODIFY
+      IMPORTING keys FOR Atendimento~setDataAtendimento.
+
+    METHODS setOperador FOR DETERMINE ON MODIFY
+      IMPORTING keys FOR Atendimento~setOperador.
+
+    METHODS setStatusAberto FOR DETERMINE ON MODIFY
+      IMPORTING keys FOR Atendimento~setStatusAberto.
+
+    METHODS validateCompanyCode FOR VALIDATE ON SAVE
+      IMPORTING keys FOR Atendimento~validateCompanyCode.
+
+    METHODS validateCustomer FOR VALIDATE ON SAVE
+      IMPORTING keys FOR Atendimento~validateCustomer.
+    METHODS checkTitulosVencidos FOR VALIDATE ON SAVE
+      IMPORTING keys FOR Atendimento~checkTitulosVencidos.
+
+    METHODS earlynumbering_create FOR NUMBERING
+      IMPORTING entities FOR CREATE Atendimento.
+ENDCLASS.
+
+CLASS lhc_zr_is_atend_cock IMPLEMENTATION.
+
+  METHOD get_global_authorizations.
+
+
+  ENDMETHOD.
+  METHOD get_instance_features.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+       ENTITY Atendimento
+       FIELDS ( Situacao )
+       WITH CORRESPONDING #( keys )
+       RESULT DATA(lt_entities)
+       FAILED failed.
+
+    result = VALUE #(
+      FOR ls_entity IN lt_entities
+      LET lv_is_aberto = COND #(
+            WHEN ls_entity-Situacao = gc_status_aberto
+            THEN abap_true ELSE abap_false )
+      IN
+      ( %tky = ls_entity-%tky
+
+        " Finalizar: só se Aberto
+        %action-finalizar = COND #(
+          WHEN lv_is_aberto = abap_true
+          THEN if_abap_behv=>fc-o-enabled
+          ELSE if_abap_behv=>fc-o-disabled )
+
+        " Cancelar: só se Aberto
+        %action-cancelar = COND #(
+          WHEN lv_is_aberto = abap_true
+          THEN if_abap_behv=>fc-o-enabled
+          ELSE if_abap_behv=>fc-o-disabled )
+
+        " Reabrir: só se NÃO Aberto (FI ou CA)
+        %action-reabrir = COND #(
+          WHEN lv_is_aberto = abap_false
+          THEN if_abap_behv=>fc-o-enabled
+          ELSE if_abap_behv=>fc-o-disabled ) ) ).
+
+  ENDMETHOD.
+
+  METHOD cancelar.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+       ENTITY Atendimento
+       FIELDS ( Situacao AtendimentoId )
+       WITH CORRESPONDING #( keys )
+       RESULT DATA(lt_entities)
+       FAILED failed.
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_is_atend_cock.
+
+    LOOP AT lt_entities INTO DATA(ls_entity).
+      IF ls_entity-Situacao <> gc_status_aberto.
+        APPEND VALUE #( %tky = ls_entity-%tky ) TO failed-atendimento.
+        APPEND VALUE #(
+          %tky = ls_entity-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text     = |Atendimento { ls_entity-AtendimentoId } não está Aberto| )
+        ) TO reported-atendimento.
+      ELSE.
+        APPEND VALUE #(
+          %tky              = ls_entity-%tky
+          Situacao          = gc_status_cancelado
+          %control-Situacao = if_abap_behv=>mk-on
+        ) TO lt_update.
+      ENDIF.
+    ENDLOOP.
+
+    IF lt_update IS NOT INITIAL.
+      MODIFY ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+        ENTITY Atendimento
+        UPDATE FIELDS ( Situacao )
+        WITH lt_update
+        FAILED failed
+        REPORTED reported.
+    ENDIF.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+      ENTITY Atendimento
+      ALL FIELDS
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_result).
+
+    result = VALUE #(
+      FOR ls_res IN lt_result
+      ( %tky   = ls_res-%tky
+        %param = ls_res ) ).
+
+
+  ENDMETHOD.
+
+  METHOD finalizar.
+
+    " Valida que está em status Aberto
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+      ENTITY Atendimento
+      FIELDS ( Situacao AtendimentoId )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_entities)
+      FAILED failed.
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_is_atend_cock.
+
+    LOOP AT lt_entities INTO DATA(ls_entity).
+      IF ls_entity-Situacao <> gc_status_aberto.
+        APPEND VALUE #( %tky = ls_entity-%tky ) TO failed-atendimento.
+        APPEND VALUE #(
+          %tky = ls_entity-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text     = |Atendimento { ls_entity-AtendimentoId } não está Aberto. Status atual: { ls_entity-Situacao }| )
+        ) TO reported-atendimento.
+      ELSE.
+        APPEND VALUE #(
+          %tky              = ls_entity-%tky
+          Situacao          = gc_status_finalizado
+          %control-Situacao = if_abap_behv=>mk-on
+        ) TO lt_update.
+      ENDIF.
+    ENDLOOP.
+
+    IF lt_update IS NOT INITIAL.
+      MODIFY ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+        ENTITY Atendimento
+        UPDATE FIELDS ( Situacao )
+        WITH lt_update
+        FAILED failed
+        REPORTED reported.
+    ENDIF.
+
+    " Retorna instâncias atualizadas
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+      ENTITY Atendimento
+      ALL FIELDS
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_result).
+
+    result = VALUE #(
+      FOR ls_res IN lt_result
+      ( %tky   = ls_res-%tky
+        %param = ls_res ) ).
+
+
+  ENDMETHOD.
+
+  METHOD reabrir.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+       ENTITY Atendimento
+       FIELDS ( Situacao AtendimentoId )
+       WITH CORRESPONDING #( keys )
+       RESULT DATA(lt_entities)
+       FAILED failed.
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_is_atend_cock.
+
+    LOOP AT lt_entities INTO DATA(ls_entity).
+      IF ls_entity-Situacao = gc_status_aberto.
+        APPEND VALUE #( %tky = ls_entity-%tky ) TO failed-atendimento.
+        APPEND VALUE #(
+          %tky = ls_entity-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text     = |Atendimento { ls_entity-AtendimentoId } já está Aberto| )
+        ) TO reported-atendimento.
+      ELSE.
+        APPEND VALUE #(
+          %tky              = ls_entity-%tky
+          Situacao          = gc_status_aberto
+          %control-Situacao = if_abap_behv=>mk-on
+        ) TO lt_update.
+      ENDIF.
+    ENDLOOP.
+
+    IF lt_update IS NOT INITIAL.
+      MODIFY ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+        ENTITY Atendimento
+        UPDATE FIELDS ( Situacao )
+        WITH lt_update
+        FAILED failed
+        REPORTED reported.
+    ENDIF.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+      ENTITY Atendimento
+      ALL FIELDS
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_result).
+
+    result = VALUE #(
+      FOR ls_res IN lt_result
+      ( %tky   = ls_res-%tky
+        %param = ls_res ) ).
+
+
+  ENDMETHOD.
+
+  METHOD setDataAtendimento.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+    ENTITY Atendimento
+    FIELDS ( DataAtendimento )
+    WITH CORRESPONDING #( keys )
+    RESULT DATA(lt_entities).
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_is_atend_cock.
+    DATA(lv_today) = cl_abap_context_info=>get_system_date( ).
+
+    LOOP AT lt_entities INTO DATA(ls_entity)
+      WHERE DataAtendimento IS INITIAL.
+
+      APPEND VALUE #(
+        %tky                      = ls_entity-%tky
+        DataAtendimento           = lv_today
+        %control-DataAtendimento  = if_abap_behv=>mk-on
+      ) TO lt_update.
+    ENDLOOP.
+
+    IF lt_update IS NOT INITIAL.
+      MODIFY ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+        ENTITY Atendimento
+        UPDATE FIELDS ( DataAtendimento )
+        WITH lt_update
+        REPORTED DATA(lt_reported).
+      reported = CORRESPONDING #( DEEP lt_reported ).
+    ENDIF.
+
+
+  ENDMETHOD.
+
+  METHOD setOperador.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+    ENTITY Atendimento
+    FIELDS ( Operador NomeOperador )
+    WITH CORRESPONDING #( keys )
+    RESULT DATA(lt_entities).
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_is_atend_cock.
+
+    " Obtém dados do usuário logado
+    DATA(lv_user_id)   = cl_abap_context_info=>get_user_technical_name( ).
+    DATA(lv_user_name) = cl_abap_context_info=>get_user_description( ).
+
+    LOOP AT lt_entities INTO DATA(ls_entity)
+      WHERE Operador IS INITIAL.
+
+      APPEND VALUE #(
+        %tky                     = ls_entity-%tky
+        Operador                 = lv_user_id
+        NomeOperador             = lv_user_name
+        %control-Operador        = if_abap_behv=>mk-on
+        %control-NomeOperador    = if_abap_behv=>mk-on
+      ) TO lt_update.
+    ENDLOOP.
+
+    IF lt_update IS NOT INITIAL.
+      MODIFY ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+        ENTITY Atendimento
+        UPDATE FIELDS ( Operador NomeOperador )
+        WITH lt_update
+        REPORTED DATA(lt_reported).
+      reported = CORRESPONDING #( DEEP lt_reported ).
+    ENDIF.
+
+
+  ENDMETHOD.
+
+  METHOD setStatusAberto.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+    ENTITY Atendimento
+    FIELDS ( Situacao )
+    WITH CORRESPONDING #( keys )
+    RESULT DATA(lt_entities).
+
+    DATA lt_update TYPE TABLE FOR UPDATE zr_is_atend_cock.
+
+    LOOP AT lt_entities INTO DATA(ls_entity)
+      WHERE Situacao IS INITIAL.
+
+      APPEND VALUE #(
+        %tky              = ls_entity-%tky
+        Situacao          = gc_status_aberto
+        %control-Situacao = if_abap_behv=>mk-on
+      ) TO lt_update.
+    ENDLOOP.
+
+    IF lt_update IS NOT INITIAL.
+      MODIFY ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+        ENTITY Atendimento
+        UPDATE FIELDS ( Situacao )
+        WITH lt_update
+        REPORTED DATA(lt_reported).
+      reported = CORRESPONDING #( DEEP lt_reported ).
+    ENDIF.
+
+
+  ENDMETHOD.
+
+  METHOD validateCompanyCode.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+    ENTITY Atendimento
+    FIELDS ( Companycode )
+    WITH CORRESPONDING #( keys )
+    RESULT DATA(lt_entities)
+    FAILED DATA(lt_failed).
+
+    DATA lt_codes TYPE SORTED TABLE OF bukrs WITH UNIQUE KEY table_line.
+    LOOP AT lt_entities INTO DATA(ls_entity) WHERE Companycode IS NOT INITIAL.
+      INSERT ls_entity-Companycode INTO TABLE lt_codes.
+    ENDLOOP.
+
+    DATA lt_valid TYPE STANDARD TABLE OF bukrs.
+
+    IF lt_codes IS NOT INITIAL.
+
+      SELECT companycode FROM i_companycode
+       WITH PRIVILEGED ACCESS
+        FOR ALL ENTRIES IN @lt_codes
+        WHERE companycode = @lt_codes-table_line
+        INTO TABLE @lt_valid.
+
+    ENDIF.
+
+    LOOP AT lt_entities INTO ls_entity.
+
+      IF ls_entity-Companycode IS INITIAL.
+
+        APPEND VALUE #( %tky = ls_entity-%tky ) TO failed-atendimento.
+        APPEND VALUE #(
+          %tky = ls_entity-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text     = 'Empresa é obrigatória' )
+          %element-Companycode = if_abap_behv=>mk-on
+        ) TO reported-atendimento.
+
+      ELSEIF NOT line_exists( lt_valid[ table_line = ls_entity-Companycode ] ).
+
+        APPEND VALUE #( %tky = ls_entity-%tky ) TO failed-atendimento.
+        APPEND VALUE #(
+          %tky = ls_entity-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text     = |Empresa { ls_entity-Companycode } não encontrada| )
+          %element-Companycode = if_abap_behv=>mk-on
+        ) TO reported-atendimento.
+
+      ENDIF.
+    ENDLOOP.
+
+
+  ENDMETHOD.
+
+  METHOD validateCustomer.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+    ENTITY Atendimento
+    FIELDS ( Customer )
+    WITH CORRESPONDING #( keys )
+    RESULT DATA(lt_entities)
+    FAILED DATA(lt_failed).
+
+    " Coleta clientes distintos para verificar existência
+    DATA lt_customers TYPE SORTED TABLE OF kunnr WITH UNIQUE KEY table_line.
+    LOOP AT lt_entities INTO DATA(ls_entity) WHERE Customer IS NOT INITIAL.
+      INSERT ls_entity-Customer INTO TABLE lt_customers.
+    ENDLOOP.
+
+    " Valida existência via CDS released
+    DATA lt_valid TYPE STANDARD TABLE OF kunnr.
+
+    IF lt_customers IS NOT INITIAL.
+
+      SELECT customer FROM i_customer
+      WITH PRIVILEGED ACCESS
+        FOR ALL ENTRIES IN @lt_customers
+        WHERE customer = @lt_customers-table_line
+        INTO TABLE @lt_valid.
+    ENDIF.
+
+    LOOP AT lt_entities INTO ls_entity.
+      " Campo vazio
+      IF ls_entity-Customer IS INITIAL.
+        APPEND VALUE #( %tky = ls_entity-%tky ) TO failed-atendimento.
+        APPEND VALUE #(
+          %tky = ls_entity-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text     = 'Cliente é obrigatório' )
+          %element-Customer = if_abap_behv=>mk-on
+        ) TO reported-atendimento.
+
+        " Cliente não existe
+      ELSEIF NOT line_exists( lt_valid[ table_line = ls_entity-Customer ] ).
+        APPEND VALUE #( %tky = ls_entity-%tky ) TO failed-atendimento.
+        APPEND VALUE #(
+          %tky = ls_entity-%tky
+          %msg = new_message_with_text(
+            severity = if_abap_behv_message=>severity-error
+            text     = |Cliente { ls_entity-Customer } não encontrado| )
+          %element-Customer = if_abap_behv=>mk-on
+        ) TO reported-atendimento.
+      ENDIF.
+    ENDLOOP.
+
+
+  ENDMETHOD.
+
+  METHOD earlynumbering_create.
+
+    SELECT MAX( atendimento_id )
+      FROM ztbis_atend_cock
+      INTO @DATA(lv_max_id).
+
+    SELECT MAX( atendimentoid )
+      FROM ztbis_atnd_cck_d
+      INTO @DATA(lv_max_draft).
+
+    IF lv_max_draft > lv_max_id.
+      lv_max_id = lv_max_draft.
+    ENDIF.
+
+    LOOP AT entities INTO DATA(ls_entity).
+
+      lv_max_id += 1.
+
+      APPEND VALUE #(
+        %cid               = ls_entity-%cid
+        %key-AtendimentoID = lv_max_id
+        %is_draft          = ls_entity-%is_draft
+      ) TO mapped-atendimento.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD checkTitulosVencidos.
+
+    READ ENTITIES OF zr_is_atend_cock IN LOCAL MODE
+      ENTITY Atendimento
+      FIELDS ( Customer Companycode )
+      WITH CORRESPONDING #( keys )
+      RESULT DATA(lt_entities)
+      FAILED DATA(lt_failed).
+
+    APPEND VALUE #(
+      %tky        = keys[ 1 ]-%tky
+      %state_area = 'VALIDATE_TITULOS'
+    ) TO reported-atendimento.
+
+    LOOP AT lt_entities INTO DATA(ls_entity)
+      WHERE Customer IS NOT INITIAL.
+
+      DATA(lv_today) = cl_abap_context_info=>get_system_date( ).
+
+      SELECT Customer,
+             CompanyCode,
+             AccountingDocument,
+             PrazoPagamento,
+             Montante,
+             Moeda,
+             StatusDescricao
+        FROM zi_is_titulos_vencidos WITH PRIVILEGED ACCESS " Mantendo a correção anterior!
+        WHERE Customer       = @ls_entity-Customer
+          AND CompanyCode    = @ls_entity-Companycode
+          AND PrazoPagamento <= @lv_today
+        INTO TABLE @DATA(lt_titulos_vencidos).
+
+      IF lt_titulos_vencidos IS NOT INITIAL.
+
+        TYPES: BEGIN OF ty_agregacao,
+                 total_montante TYPE decfloat16,
+                 qtd_titulos    TYPE i,
+               END OF ty_agregacao.
+
+        DATA(ls_agregacao) = REDUCE ty_agregacao(
+          INIT agg TYPE ty_agregacao
+          FOR ls_titulo IN lt_titulos_vencidos
+          NEXT agg-total_montante = agg-total_montante + ls_titulo-Montante
+               agg-qtd_titulos    = agg-qtd_titulos + 1
+        ).
+
+        DATA(lv_moeda) = lt_titulos_vencidos[ 1 ]-Moeda.
+
+        SORT lt_titulos_vencidos BY PrazoPagamento ASCENDING.
+        DATA(lv_vencimento_mais_antigo) = lt_titulos_vencidos[ 1 ]-PrazoPagamento.
+
+        DATA(lv_customer_str) = |{ ls_entity-Customer ALPHA = OUT }|.
+        DATA(lv_qtd_str)      = |{ ls_agregacao-qtd_titulos }|.
+        DATA(lv_montante_str) = |{ ls_agregacao-total_montante }|.
+        DATA(lv_moeda_str)    = |{ lv_moeda }|.
+
+        APPEND VALUE #(
+          %tky        = ls_entity-%tky
+          %state_area = 'VALIDATE_TITULOS'
+          %msg        = new_message(
+            id       = 'ZMSG_INS'
+            number   =  001
+            severity = if_abap_behv_message=>severity-warning
+            v1       = lv_customer_str
+            v2       = lv_qtd_str
+            v3       = lv_montante_str
+            v4       = lv_moeda_str )
+          %element-Customer = if_abap_behv=>mk-on
+        ) TO reported-atendimento.
+
+      ENDIF.
+
+    ENDLOOP.
+  ENDMETHOD.
+
+ENDCLASS.
